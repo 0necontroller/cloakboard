@@ -1,11 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, globalShortcut } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
+let mainWindow: BrowserWindow
+let overlayWindow: BrowserWindow | null = null
+
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
@@ -35,6 +38,52 @@ function createWindow(): void {
   }
 }
 
+function createOverlayWindow(): void {
+  if (overlayWindow) {
+    overlayWindow.show()
+    return
+  }
+
+  overlayWindow = new BrowserWindow({
+    width: 400,
+    height: 300,
+    show: false,
+    frame: false,
+    alwaysOnTop: true,
+    transparent: true,
+    opacity: 0.8,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  overlayWindow.setIgnoreMouseEvents(false) // Allow interaction
+  overlayWindow.setSkipTaskbar(true)
+
+  // Load overlay content
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    overlayWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#/overlay`)
+  } else {
+    overlayWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: '#/overlay' })
+  }
+
+  overlayWindow.on('ready-to-show', () => {
+    overlayWindow?.show()
+  })
+
+  overlayWindow.on('closed', () => {
+    overlayWindow = null
+  })
+}
+
+function closeOverlayWindow(): void {
+  if (overlayWindow) {
+    overlayWindow.close()
+    overlayWindow = null
+  }
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -52,6 +101,23 @@ app.whenReady().then(() => {
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
 
+  ipcMain.handle('toggle-overlay', () => {
+    if (overlayWindow && overlayWindow.isVisible()) {
+      closeOverlayWindow()
+    } else {
+      createOverlayWindow()
+    }
+  })
+
+  // Register global shortcuts
+  globalShortcut.register('CommandOrControl+Shift+O', () => {
+    if (overlayWindow && overlayWindow.isVisible()) {
+      closeOverlayWindow()
+    } else {
+      createOverlayWindow()
+    }
+  })
+
   createWindow()
 
   app.on('activate', function () {
@@ -65,6 +131,7 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  globalShortcut.unregisterAll()
   if (process.platform !== 'darwin') {
     app.quit()
   }
